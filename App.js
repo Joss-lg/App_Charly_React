@@ -1,6 +1,7 @@
 // App.js
-// - Mantiene el splash (logo de Pizzeto's) hasta que las fuentes Poppins están listas
+// - Mantiene el splash (logo) hasta que las fuentes Poppins están listas
 //   y la primera pantalla ya se dibujó; luego lo quita (con desvanecido en la app instalada).
+// - Si el cliente todavía no eligió sucursal, muestra la pantalla de selección.
 // - Al tocar una notificación, abre la pantalla de su destino (también con la app cerrada).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -17,12 +18,14 @@ import { Notifications } from './src/lib/notificacionesSeguras';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { ThemeProvider, useTema } from './src/context/ThemeContext';
+import { SucursalProvider, useSucursal } from './src/context/SucursalContext';
 import { DatosProvider } from './src/context/DatosContext';
 import {
   NotificacionesProvider, useNotificaciones, irADestino,
 } from './src/context/NotificacionesContext';
 import { FavoritosProvider } from './src/context/FavoritosContext';
 import AppNavigator from './src/navigation/AppNavigator';
+import ElegirSucursalScreen from './src/screens/ElegirSucursalScreen';
 import { configurarNotificaciones } from './src/lib/recordatorios';
 
 // ¿La app corre dentro de Expo Go? (ahí no se puede personalizar el splash)
@@ -53,6 +56,7 @@ const CLAVE_ULTIMA_ATENDIDA = 'notif:ultimaAtendida';
 function Root() {
   const { tema, modoOscuro } = useTema();
   const { marcarLeida, refrescarRecordatorios } = useNotificaciones();
+  const { sucursalId, cargado: sucursalCargada } = useSucursal();
 
   const destinoPendiente = useRef(null);
   const ultimaClave = useRef(null);
@@ -71,7 +75,8 @@ function Root() {
     return () => clearTimeout(t);
   }, []);
 
-  const listo = fontsLoaded || Boolean(errorFuentes) || tiempoAgotado;
+  // Listo = fuentes listas Y ya se leyó la sucursal guardada (evita parpadeos)
+  const listo = (fontsLoaded || Boolean(errorFuentes) || tiempoAgotado) && sucursalCargada;
 
   // Quita el splash cuando la primera pantalla ya está dibujada (sin parpadeos)
   const alDibujar = useCallback(() => {
@@ -89,7 +94,7 @@ function Root() {
     if (navegacionRef.isReady()) {
       irADestino(navegacionRef, data.destino);
     } else {
-      // La app se está abriendo: se navega en cuanto esté lista
+      // La app se está abriendo (o falta elegir sucursal): se navega en cuanto esté lista
       destinoPendiente.current = data.destino;
     }
   };
@@ -151,6 +156,16 @@ function Root() {
   // Mientras tanto no se dibuja nada: el splash con el logo sigue en pantalla
   if (!listo) return null;
 
+  // Todavía no eligió sucursal: pantalla de selección
+  if (sucursalId == null) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#C0392B' }} onLayout={alDibujar}>
+        <StatusBar style="light" />
+        <ElegirSucursalScreen />
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: tema.fondo }} onLayout={alDibujar}>
       <StatusBar style={tema.statusBar} />
@@ -165,13 +180,15 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <DatosProvider>
-          <NotificacionesProvider>
-            <FavoritosProvider>
-              <Root />
-            </FavoritosProvider>
-          </NotificacionesProvider>
-        </DatosProvider>
+        <SucursalProvider>
+          <DatosProvider>
+            <NotificacionesProvider>
+              <FavoritosProvider>
+                <Root />
+              </FavoritosProvider>
+            </NotificacionesProvider>
+          </DatosProvider>
+        </SucursalProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

@@ -6,19 +6,21 @@ import HomeScreen from '../screens/HomeScreen';
 import PromocionesScreen from '../screens/PromocionesScreen';
 import SucursalesScreen from '../screens/SucursalesScreen';
 import NotificacionesScreen from '../screens/NotificacionesScreen';
+import BuscarScreen from '../screens/BuscarScreen';
 
 const Tab = createBottomTabNavigator();
 
+// Orden de la barra: Promos, Sucursales, Inicio (en medio), Avisos, Buscar
 export default function TabNavigator() {
   const { noLeidas } = useNotificaciones();
   const { promociones } = useDatos();
 
   return (
     <Tab.Navigator
+      initialRouteName="Inicio"
       tabBar={(props) => <TabBarPizzetos {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen name="Inicio" component={HomeScreen} />
       <Tab.Screen
         name="Promos"
         component={PromocionesScreen}
@@ -27,6 +29,7 @@ export default function TabNavigator() {
         }}
       />
       <Tab.Screen name="Sucursales" component={SucursalesScreen} />
+      <Tab.Screen name="Inicio" component={HomeScreen} />
       <Tab.Screen
         name="Notificaciones"
         component={NotificacionesScreen}
@@ -34,6 +37,7 @@ export default function TabNavigator() {
           tabBarBadge: noLeidas > 0 ? String(noLeidas) : undefined,
         }}
       />
+      <Tab.Screen name="Buscar" component={BuscarScreen} />
     </Tab.Navigator>
   );
 }

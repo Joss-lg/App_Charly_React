@@ -1,19 +1,24 @@
 // src/components/TabBarPizzetos.js
-// Barra de pestañas flotante (el nombre del archivo se quedó del proyecto original).
-// - iPhone: Liquid Glass en claro y vidrio esmerilado en oscuro. Android: fondo sólido.
-// - Cápsula del color de la marca que se desliza con rebote al cambiar de pestaña.
-// - Desliza el dedo sobre la barra y la cápsula te sigue como una lupa
-//   (como en WhatsApp); al soltar, abre la pestaña donde levantaste el dedo.
-//   En iPhone brilla como cristal; en Android se pone del color de la marca más intenso.
+// Barra de pestañas con una pizza realista que brinca entre botones.
+// (el nombre del archivo se quedó del proyecto original)
+// - La barra es sólida: blanca en modo claro y oscura en modo oscuro.
+// - Al cambiar de pestaña: la pizza brinca girando, cae sobre la barra
+//   (cubriendo lo blanco), se aplasta un poquito y suelta ondas rojas.
+// - Los nombres de las pestañas quedan en su propia franja de abajo:
+//   la pizza, su sombra y las ondas no los tocan.
+// - Desliza el dedo sobre la barra y la pizza te sigue; al soltar,
+//   abre la pestaña donde levantaste el dedo.
 // - Los colores vienen de src/config/marca.js.
 
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, Animated, Platform, PanResponder,
+  View, Text, Pressable, StyleSheet, Animated, Easing, Platform, PanResponder,
 } from 'react-native';
+import Svg, {
+  Path, Circle, Line, G, Ellipse, Defs, RadialGradient, Stop,
+} from 'react-native-svg';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GlassView, isLiquidGlassAvailable, isGlassEffectAPIAvailable } from 'expo-glass-effect';
-import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import { useTema } from '../context/ThemeContext';
 import { COLORES } from '../config/marca';
@@ -21,11 +26,17 @@ import {
   IconoInicio, IconoPromos, IconoSucursales, IconoNotificaciones,
 } from './IconosTab';
 
+// Icono de la pestaña Buscar
+function IconoBuscarTab({ color }) {
+  return <Ionicons name="search" size={22} color={color} />;
+}
+
 const ICONOS = {
   Inicio: IconoInicio,
   Promos: IconoPromos,
   Sucursales: IconoSucursales,
   Notificaciones: IconoNotificaciones,
+  Buscar: IconoBuscarTab,
 };
 
 const ETIQUETAS = {
@@ -33,23 +44,24 @@ const ETIQUETAS = {
   Promos: 'Promos',
   Sucursales: 'Sucursales',
   Notificaciones: 'Avisos',
+  Buscar: 'Buscar',
 };
 
 const ES_ANDROID = Platform.OS === 'android';
+const MARCA_COLOR = COLORES.primario;
 
-const TIENE_LIQUID_GLASS =
-  Platform.OS === 'ios' && isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
+// ── Medidas de la barra ──
+const ALTO = 70;              // alto de la barra (más alto = más espacio para los nombres)
+const PADX = 14;              // espacio a los lados dentro de la barra
+const RADIO_BARRA = 32;       // esquinas redondeadas de la barra
+const BOLA = 52;              // tamaño de la pizza
+const RADIO_BOLA = BOLA / 2;
+const BOLA_CENTRO_Y = 0;      // dónde se queda la pizza (más chico = más arriba, lejos de los nombres)
+const ONDA = 64;              // tamaño inicial de las ondas
+const ZONA_ONDAS = 40;        // las ondas solo se ven en esta franja de arriba (no tocan los nombres)
+const ALTURA_SALTO = -30;     // qué tan alto brinca la pizza
 
-const PADDING = 6;
-
-// Efecto lupa al arrastrar: crece a lo ancho y casi nada a lo alto
-// (si crece mucho de alto, la orilla de la barra la recorta)
-const LUPA_ANCHO = 1.14;
-const LUPA_ALTO = 1.04;
-
-// Colores del fondo sólido que se usa en Android
-const FONDO_ANDROID_CLARO = 'rgba(255,255,255,0.96)';
-const FONDO_ANDROID_OSCURO = 'rgba(32,32,32,0.96)';
+const limitar = (valor, min, max) => Math.max(min, Math.min(max, valor));
 
 // Convierte un color "#RRGGBB" a "rgba(r,g,b,alfa)" para darle transparencia
 function conTransparencia(hex, alfa) {
@@ -60,150 +72,235 @@ function conTransparencia(hex, alfa) {
   return `rgba(${r},${g},${b},${alfa})`;
 }
 
-const MARCA_COLOR = COLORES.primario;
-
-const limitar = (valor, min, max) => Math.max(min, Math.min(max, valor));
-
 // Vibración suave al pasar de una pestaña a otra mientras arrastras
 function vibrarCambio() {
   if (ES_ANDROID) {
-    // En algunos Android la vibración de "selección" es muy fuerte o no se siente
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
   } else {
     Haptics.selectionAsync().catch(() => {});
   }
 }
 
-// iPhone modo claro: Liquid Glass real.
-// iPhone modo oscuro: vidrio esmerilado que no apaga los colores.
-// Android: fondo sólido casi opaco (el difuminado de Android no es confiable
-// y en modo claro hacía que la barra desapareciera).
-function FondoVidrio({ modoOscuro, style, children }) {
-  if (ES_ANDROID) {
-    return (
-      <View
-        style={[
-          style,
-          {
-            backgroundColor: modoOscuro ? FONDO_ANDROID_OSCURO : FONDO_ANDROID_CLARO,
-            borderWidth: 1,
-            borderColor: modoOscuro ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)',
-          },
-        ]}
-      >
-        {children}
-      </View>
-    );
-  }
+// ── Datos del dibujo de la pizza (dibujo de 100 x 100) ──
+const PEPERONIS = [
+  { x: 50, y: 50, r: 7.5 }, { x: 72, y: 40, r: 7 }, { x: 66, y: 67, r: 7 },
+  { x: 42, y: 72, r: 7.2 }, { x: 28, y: 60, r: 6.8 }, { x: 30, y: 35, r: 7 },
+  { x: 52, y: 26, r: 7 }, { x: 80, y: 58, r: 5.5 }, { x: 20, y: 45, r: 5.5 },
+  { x: 60, y: 80, r: 5 }, { x: 70, y: 22, r: 5 },
+];
+const HOJAS = [
+  { x: 40, y: 41, giro: -30 },
+  { x: 60, y: 56, giro: 55 },
+  { x: 44, y: 61, giro: 120 },
+];
+// Ampollas de la orilla de la masa
+const AMPOLLAS = [8, 35, 62, 95, 120, 150, 178, 205, 232, 262, 290, 318, 345].map((grados, i) => {
+  const r = (grados * Math.PI) / 180;
+  return { x: 50 + 45 * Math.cos(r), y: 50 + 45 * Math.sin(r), tam: [2.2, 3, 2.6][i % 3] };
+});
+// Manchas doradas del queso y brillos
+const DORADOS = [
+  { x: 36, y: 50, r: 4 }, { x: 62, y: 30, r: 3.5 }, { x: 70, y: 62, r: 4 },
+  { x: 48, y: 68, r: 3.2 }, { x: 33, y: 28, r: 3 }, { x: 58, y: 46, r: 3 },
+];
+const BRILLOS = [
+  { x: 44, y: 36, r: 3 }, { x: 66, y: 50, r: 2.5 }, { x: 36, y: 64, r: 2.5 },
+];
 
-  if (TIENE_LIQUID_GLASS && !modoOscuro) {
-    return (
-      <GlassView
-        style={style}
-        glassEffectStyle="regular"
-        tintColor="rgba(255,255,255,0.12)"
-      >
-        {children}
-      </GlassView>
-    );
-  }
-
+// Dibujo de la pizza (se dibuja una sola vez)
+const Pizza = memo(function Pizza() {
   return (
-    <BlurView
-      intensity={modoOscuro ? 50 : 45}
-      tint={modoOscuro ? 'dark' : 'light'}
-      style={[
-        style,
-        modoOscuro
-          ? {
-              backgroundColor: 'rgba(40,40,40,0.55)',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.12)',
-            }
-          : { backgroundColor: 'rgba(255,255,255,0.35)' },
-      ]}
-    >
-      {children}
-    </BlurView>
-  );
-}
+    <Svg width={BOLA} height={BOLA} viewBox="0 0 100 100">
+      <Defs>
+        <RadialGradient id="masa" cx="0.5" cy="0.5" r="0.5">
+          <Stop offset="0" stopColor="#F3C877" />
+          <Stop offset="0.8" stopColor="#DDA04A" />
+          <Stop offset="1" stopColor="#A8651F" />
+        </RadialGradient>
+        <RadialGradient id="queso" cx="0.42" cy="0.38" r="0.7">
+          <Stop offset="0" stopColor="#FFEDAA" />
+          <Stop offset="0.6" stopColor="#F7C95A" />
+          <Stop offset="1" stopColor="#E0952E" />
+        </RadialGradient>
+        <RadialGradient id="pep" cx="0.4" cy="0.35" r="0.75">
+          <Stop offset="0" stopColor="#E2453A" />
+          <Stop offset="0.6" stopColor="#BE2A20" />
+          <Stop offset="1" stopColor="#7E140E" />
+        </RadialGradient>
+      </Defs>
 
-// Cápsula que se desliza: cristalina en modo claro, sólida en modo oscuro
-function Indicador({ modoOscuro }) {
-  return (
-    <View
-      style={[
-        styles.indicadorRelleno,
-        styles.indicadorVidrio,
-        // En Android el fondo es blanco sólido: la cápsula necesita más color para verse
-        ES_ANDROID && !modoOscuro && {
-          backgroundColor: conTransparencia(MARCA_COLOR, 0.3),
-          borderColor: conTransparencia(MARCA_COLOR, 0.3),
-        },
-        modoOscuro && {
-          backgroundColor: conTransparencia(MARCA_COLOR, 0.9),
-          borderColor: 'rgba(255,255,255,0.25)',
-        },
-      ]}
-    >
-      <View
-        style={[
-          styles.brillo,
-          modoOscuro && { backgroundColor: 'rgba(255,255,255,0.14)' },
-        ]}
+      {/* Masa */}
+      <Circle cx="50" cy="50" r="49" fill="url(#masa)" />
+      {AMPOLLAS.map((a, i) => (
+        <G key={`a${i}`}>
+          <Circle cx={a.x} cy={a.y} r={a.tam} fill="#8E5416" opacity={0.3} />
+          <Circle cx={a.x - 0.6} cy={a.y - 0.6} r={a.tam * 0.45} fill="#F6D58E" opacity={0.45} />
+        </G>
+      ))}
+      <Path
+        d="M3.2 41.8 A47.5 47.5 0 0 1 45.9 2.7"
+        stroke="rgba(255,244,214,0.55)"
+        strokeWidth={2}
+        strokeLinecap="round"
+        fill="none"
       />
-    </View>
+
+      {/* Salsa que se asoma y queso */}
+      <Circle cx="50" cy="50" r="43" fill="#B83A22" />
+      <Circle cx="50" cy="50" r="41.5" fill="url(#queso)" />
+      {DORADOS.map((d, i) => (
+        <Circle key={`d${i}`} cx={d.x} cy={d.y} r={d.r} fill="#B8651E" opacity={0.28} />
+      ))}
+      {BRILLOS.map((b, i) => (
+        <Circle key={`b${i}`} cx={b.x} cy={b.y} r={b.r} fill="#FFFFFF" opacity={0.3} />
+      ))}
+
+      {/* Pepperoni con sombra, volumen y brillo */}
+      {PEPERONIS.map((p, i) => (
+        <G key={`p${i}`}>
+          <Circle cx={p.x + 1} cy={p.y + 1.8} r={p.r} fill="#4A1A08" opacity={0.35} />
+          <Circle cx={p.x} cy={p.y} r={p.r} fill="url(#pep)" />
+          <Circle
+            cx={p.x} cy={p.y} r={p.r - 0.5}
+            fill="none" stroke="#7A130D" strokeWidth={0.8} opacity={0.6}
+          />
+          <Circle cx={p.x + p.r * 0.3} cy={p.y + p.r * 0.2} r={p.r * 0.12} fill="#F4A58E" opacity={0.6} />
+          <Circle cx={p.x - p.r * 0.35} cy={p.y + p.r * 0.35} r={p.r * 0.1} fill="#F4A58E" opacity={0.5} />
+          <Circle cx={p.x - p.r * 0.3} cy={p.y - p.r * 0.35} r={p.r * 0.28} fill="#FFFFFF" opacity={0.25} />
+        </G>
+      ))}
+
+      {/* Hojas de albahaca */}
+      {HOJAS.map((h, i) => (
+        <G key={`h${i}`} transform={`rotate(${h.giro} ${h.x} ${h.y})`}>
+          <Ellipse cx={h.x} cy={h.y} rx={5} ry={2.6} fill="#3F8A36" />
+          <Line
+            x1={h.x - 4.2} y1={h.y} x2={h.x + 4.2} y2={h.y}
+            stroke="#A5D6A7" strokeWidth={0.5} opacity={0.7}
+          />
+        </G>
+      ))}
+
+      {/* Brillo suave general */}
+      <Ellipse
+        cx="38" cy="30" rx="26" ry="14"
+        fill="rgba(255,255,255,0.10)"
+        transform="rotate(-30 38 30)"
+      />
+    </Svg>
   );
-}
+});
 
 export default function TabBarPizzetos({ state, descriptors, navigation }) {
   const { modoOscuro } = useTema();
   const insets = useSafeAreaInsets();
-  const [anchoItem, setAnchoItem] = useState(0);
+  const [ancho, setAncho] = useState(0);
   // Pestaña bajo el dedo mientras deslizas (null = no estás deslizando)
   const [indiceDedo, setIndiceDedo] = useState(null);
 
+  const total = state.routes.length;
+  const anchoItem = ancho ? (ancho - PADX * 2) / total : 0;
+
   // Valores animados que NO se recrean nunca
-  const posicionX = useRef(new Animated.Value(0)).current;
-  const escalaX = useRef(new Animated.Value(1)).current;
-  const escalaY = useRef(new Animated.Value(1)).current;
-  const lupa = useRef(new Animated.Value(0)).current; // 0 = normal, 1 = arrastrando
+  const bolaX = useRef(new Animated.Value(0)).current;      // centro de la pizza
+  const salto = useRef(new Animated.Value(0)).current;      // altura del brinco
+  const giro = useRef(new Animated.Value(0)).current;       // vueltas de la pizza
+  const lupa = useRef(new Animated.Value(0)).current;       // 0 = normal, 1 = arrastrando
+  const aplaste = useRef(new Animated.Value(0)).current;    // 1 = pizza aplastada al caer
+  const onda1 = useRef(new Animated.Value(0)).current;      // primera onda roja
+  const onda2 = useRef(new Animated.Value(0)).current;      // segunda onda roja
+  const bolaIzq = useRef(Animated.add(bolaX, -RADIO_BOLA)).current;
+  const ondaIzq = useRef(Animated.add(bolaX, -ONDA / 2)).current;
+  const escalaLupa = useRef(
+    lupa.interpolate({ inputRange: [0, 1], outputRange: [1, 1.15] })
+  ).current;
+  // Al caer: más ancha y más baja
+  const escalaX = useRef(
+    Animated.add(escalaLupa, aplaste.interpolate({ inputRange: [0, 1], outputRange: [0, 0.18] }))
+  ).current;
+  const escalaY = useRef(
+    Animated.add(escalaLupa, aplaste.interpolate({ inputRange: [0, 1], outputRange: [0, -0.16] }))
+  ).current;
+  const giroTotal = useRef(0);
   const indiceAnimado = useRef(state.index);
 
-  // Para saber dónde está la barra en la pantalla (y poner la cápsula bajo el dedo)
   const barraRef = useRef(null);
   const barraX = useRef(0);
   const dedoRef = useRef(null);
 
-  const total = state.routes.length;
+  const centroDe = (indice) => PADX + anchoItem * (indice + 0.5);
 
+  // Brinco de la pizza hacia la pestaña "indice"
   const animarA = (indice) => {
     if (!anchoItem) return;
     indiceAnimado.current = indice;
+    const destino = centroDe(indice);
 
-    // Detiene cualquier animación anterior para que no se encimen
-    posicionX.stopAnimation();
-    escalaX.stopAnimation();
-    escalaY.stopAnimation();
+    [bolaX, salto, giro, aplaste, onda1, onda2].forEach((v) => v.stopAnimation());
+    onda1.setValue(0);
+    onda2.setValue(0);
+    giroTotal.current += 1;
 
     Animated.parallel([
-      // Deslizamiento con resorte
-      Animated.spring(posicionX, {
-        toValue: indice * anchoItem,
-        damping: 16,
-        stiffness: 160,
-        mass: 1,
+      // La pizza viaja de lado
+      Animated.timing(bolaX, {
+        toValue: destino,
+        duration: 430,
+        easing: Easing.inOut(Easing.cubic),
         useNativeDriver: false,
       }),
-      // Se estira mientras viaja y regresa con rebote
+      // Brinca en arco y cae con rebote
       Animated.sequence([
+        Animated.timing(salto, {
+          toValue: ALTURA_SALTO,
+          duration: 200,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: false,
+        }),
+        Animated.timing(salto, {
+          toValue: 0,
+          duration: 230,
+          easing: Easing.bounce,
+          useNativeDriver: false,
+        }),
+      ]),
+      // Gira una vuelta completa
+      Animated.timing(giro, {
+        toValue: giroTotal.current,
+        duration: 430,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: false,
+      }),
+      // Al caer: se aplasta un poquito y rebota
+      Animated.sequence([
+        Animated.delay(410),
+        Animated.timing(aplaste, { toValue: 1, duration: 80, useNativeDriver: false }),
+        Animated.spring(aplaste, {
+          toValue: 0,
+          damping: 5,
+          stiffness: 220,
+          useNativeDriver: false,
+        }),
+      ]),
+      // Al caer: dos ondas rojas se expanden por la barra
+      Animated.sequence([
+        Animated.delay(410),
         Animated.parallel([
-          Animated.timing(escalaX, { toValue: 1.25, duration: 150, useNativeDriver: false }),
-          Animated.timing(escalaY, { toValue: 0.88, duration: 150, useNativeDriver: false }),
-        ]),
-        Animated.parallel([
-          Animated.spring(escalaX, { toValue: 1, damping: 8, stiffness: 170, useNativeDriver: false }),
-          Animated.spring(escalaY, { toValue: 1, damping: 8, stiffness: 170, useNativeDriver: false }),
+          Animated.timing(onda1, {
+            toValue: 1,
+            duration: 800,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+          }),
+          Animated.sequence([
+            Animated.delay(150),
+            Animated.timing(onda2, {
+              toValue: 1,
+              duration: 800,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: false,
+            }),
+          ]),
         ]),
       ]),
     ]).start();
@@ -221,10 +318,10 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
     });
     if (!enfocado && !evento.defaultPrevented) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      animarA(indice); // la animación arranca al instante del toque
+      animarA(indice);
       navigation.navigate(route.name);
     } else {
-      animarA(state.index); // regresa la cápsula a su lugar
+      animarA(state.index); // regresa la pizza a su lugar
     }
   };
 
@@ -232,18 +329,18 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
   const ultimo = useRef({});
   ultimo.current = { anchoItem, total, irAPestana, indiceActual: state.index };
 
-  // Dónde poner la cápsula para que quede centrada bajo el dedo
+  // Dónde poner la pizza para que quede bajo el dedo
   const posicionDesdeDedo = (pageX) => {
-    const { anchoItem: ancho, total: n } = ultimo.current;
-    if (!ancho) return 0;
-    return limitar(pageX - barraX.current - PADDING - ancho / 2, 0, (n - 1) * ancho);
+    const { anchoItem: a, total: n } = ultimo.current;
+    if (!a) return 0;
+    return limitar(pageX - barraX.current, PADX + a / 2, PADX + a * (n - 0.5));
   };
 
   // Marca la pestaña bajo el dedo (con vibración suave al cambiar)
-  const marcarPestana = (posicion) => {
-    const { anchoItem: ancho } = ultimo.current;
-    if (!ancho) return;
-    const indice = Math.round(posicion / ancho);
+  const marcarPestana = (x) => {
+    const { anchoItem: a, total: n } = ultimo.current;
+    if (!a) return;
+    const indice = limitar(Math.round((x - PADX - a / 2) / a), 0, n - 1);
     if (indice !== dedoRef.current) {
       dedoRef.current = indice;
       setIndiceDedo(indice);
@@ -262,37 +359,34 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
   // ── Gesto de deslizar el dedo sobre la barra ──
   const gestos = useRef(
     PanResponder.create({
-      // Un toque normal lo manejan los botones; solo se activa al deslizar de lado
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponderCapture: (_, g) =>
         Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
       onPanResponderTerminationRequest: () => false,
 
       onPanResponderGrant: (_, g) => {
-        // Por si la barra se movió (rotación, etc.), vuelve a medir su posición
         barraRef.current?.measureInWindow((x) => {
           if (typeof x === 'number') barraX.current = x;
         });
 
-        posicionX.stopAnimation();
-        escalaX.stopAnimation();
-        escalaY.stopAnimation();
+        [bolaX, salto, giro, aplaste, onda1, onda2].forEach((v) => v.stopAnimation());
+        onda1.setValue(0);
+        onda2.setValue(0);
+        aplaste.setValue(0);
 
         const destino = posicionDesdeDedo(g.x0 + g.dx);
         marcarPestana(destino);
 
-        // La cápsula salta bajo el dedo y crece como lupa
         Animated.parallel([
-          Animated.spring(posicionX, { toValue: destino, speed: 30, bounciness: 4, useNativeDriver: false }),
-          Animated.spring(escalaX, { toValue: LUPA_ANCHO, speed: 20, bounciness: 8, useNativeDriver: false }),
-          Animated.spring(escalaY, { toValue: LUPA_ALTO, speed: 20, bounciness: 8, useNativeDriver: false }),
+          Animated.spring(bolaX, { toValue: destino, speed: 30, bounciness: 4, useNativeDriver: false }),
+          Animated.timing(salto, { toValue: -6, duration: 120, useNativeDriver: false }),
           Animated.spring(lupa, { toValue: 1, speed: 20, bounciness: 4, useNativeDriver: false }),
         ]).start();
       },
 
       onPanResponderMove: (_, g) => {
         const destino = posicionDesdeDedo(g.moveX);
-        posicionX.setValue(destino);
+        bolaX.setValue(destino);
         marcarPestana(destino);
       },
 
@@ -301,9 +395,10 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
     })
   ).current;
 
-  // Al medir la barra por primera vez, coloca la cápsula sin animar
+  // Al medir la barra por primera vez, coloca la pizza sin animar
   useEffect(() => {
-    if (anchoItem) posicionX.setValue(state.index * anchoItem);
+    if (!anchoItem) return;
+    bolaX.setValue(PADX + anchoItem * (state.index + 0.5));
   }, [anchoItem]);
 
   // Si la pestaña cambia desde otro lado (botón Sucursales, notificaciones, etc.)
@@ -311,22 +406,7 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
     if (state.index !== indiceAnimado.current) animarA(state.index);
   }, [state.index, anchoItem]);
 
-  // Contraste para que se lea sobre las fotos
   const colorInactivo = modoOscuro ? '#D6D6D6' : '#3A3A3A';
-  // Pestaña marcada: en oscuro la cápsula es sólida, así que se usa blanco
-  const colorMarcado = modoOscuro ? COLORES.textoSobrePrimario : '#1A1A1A';
-  // Halo detrás del texto: claro en modo claro, oscuro en modo oscuro
-  // (en Android el fondo ya es sólido, no hace falta halo)
-  const colorHalo = ES_ANDROID
-    ? 'transparent'
-    : modoOscuro ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)';
-
-  // Efecto al arrastrar:
-  // iPhone → brillo blanco de cristal. Android → color de la marca más intenso.
-  const colorLupa = ES_ANDROID ? MARCA_COLOR : '#FFFFFF';
-  let opacidadLupa;
-  if (ES_ANDROID) opacidadLupa = modoOscuro ? 0.1 : 0.3;
-  else opacidadLupa = modoOscuro ? 0.18 : 0.3;
 
   // Mientras deslizas, se marca la pestaña bajo el dedo; si no, la actual
   const indiceVisual = indiceDedo ?? state.index;
@@ -339,63 +419,59 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
       <View
         ref={barraRef}
         style={[
-          styles.sombra,
-          modoOscuro && styles.sombraOscura,
-          // En Android la sombra (elevation) solo se dibuja si el elemento tiene fondo
-          ES_ANDROID && {
-            backgroundColor: modoOscuro ? FONDO_ANDROID_OSCURO : FONDO_ANDROID_CLARO,
-            elevation: 8,
+          styles.barra,
+          {
+            backgroundColor: modoOscuro ? '#1E1E1E' : '#FFFFFF',
+            borderColor: modoOscuro ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)',
+            shadowOpacity: modoOscuro ? 0.6 : 0.18,
           },
         ]}
         onLayout={(e) => {
-          const ancho = e.nativeEvent.layout.width;
-          setAnchoItem((ancho - PADDING * 2) / total);
+          setAncho(e.nativeEvent.layout.width);
           barraRef.current?.measureInWindow((x) => {
             if (typeof x === 'number') barraX.current = x;
           });
         }}
         {...gestos.panHandlers}
       >
-        <FondoVidrio modoOscuro={modoOscuro} style={styles.barra}>
-          {anchoItem > 0 && (
-            <Animated.View
-              pointerEvents="none"
-              style={[
-                styles.indicador,
-                {
-                  width: anchoItem,
-                  transform: [
-                    { translateX: posicionX },
-                    { scaleX: escalaX },
-                    { scaleY: escalaY },
-                  ],
-                },
-              ]}
-            >
-              <Indicador modoOscuro={modoOscuro} />
-              {/* Efecto extra mientras arrastras (cristal en iPhone, color intenso en Android) */}
+        {/* Ondas rojas que se expanden por la parte de arriba de la barra
+            (no llegan a los nombres de abajo) */}
+        {ancho > 0 && (
+          <View pointerEvents="none" style={styles.ondasClip}>
+            {[onda1, onda2].map((o, i) => (
               <Animated.View
+                key={i}
                 style={[
-                  styles.brilloLupa,
+                  styles.onda,
                   {
-                    backgroundColor: colorLupa,
-                    opacity: lupa.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, opacidadLupa],
+                    opacity: o.interpolate({
+                      inputRange: [0, 0.12, 1],
+                      outputRange: [0, 0.6, 0],
                     }),
+                    transform: [
+                      { translateX: ondaIzq },
+                      {
+                        scale: o.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.4, 3.6],
+                        }),
+                      },
+                    ],
                   },
                 ]}
               />
-            </Animated.View>
-          )}
+            ))}
+          </View>
+        )}
 
+        {/* Botones */}
+        <View style={styles.fila}>
           {state.routes.map((route, index) => {
             const enfocado = state.index === index;
             const marcado = indiceVisual === index;
             const { options } = descriptors[route.key];
             const Icono = ICONOS[route.name];
             const badge = options.tabBarBadge;
-            const color = marcado ? colorMarcado : colorInactivo;
 
             return (
               <Pressable
@@ -406,9 +482,10 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
                 accessibilityState={enfocado ? { selected: true } : {}}
                 accessibilityLabel={ETIQUETAS[route.name]}
               >
-                <View>
-                  <Icono color={color} activo={marcado} />
-                  {badge !== undefined && !enfocado && (
+                <View style={styles.cajaIcono}>
+                  {/* En la pestaña marcada no hay icono: ahí está la pizza */}
+                  {!marcado && Icono && <Icono color={colorInactivo} activo={false} />}
+                  {badge !== undefined && !marcado && (
                     <View style={styles.badge}>
                       <Text style={styles.badgeTexto}>{badge}</Text>
                     </View>
@@ -418,20 +495,59 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
                   style={[
                     styles.etiqueta,
                     {
-                      color,
+                      color: marcado ? MARCA_COLOR : colorInactivo,
                       fontFamily: marcado ? 'Poppins_700Bold' : 'Poppins_600SemiBold',
-                      // Sin halo en la pestaña marcada: sobre la cápsula no hace falta
-                      textShadowColor: marcado ? 'transparent' : colorHalo,
                     },
                   ]}
                   numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
                 >
                   {ETIQUETAS[route.name]}
                 </Text>
               </Pressable>
             );
           })}
-        </FondoVidrio>
+        </View>
+
+        {/* La pizza que brinca y cae sobre la barra */}
+        {ancho > 0 && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.bola,
+              {
+                transform: [
+                  { translateX: bolaIzq },
+                  { translateY: salto },
+                  { scaleX: escalaX },
+                  { scaleY: escalaY },
+                ],
+              },
+            ]}
+          >
+            {/* Sombra pequeña pegada a la pizza (no llega a los nombres) */}
+            <View style={styles.sombraBolaGrande} />
+            <View style={styles.sombraBola} />
+            <Animated.View
+              style={[
+                StyleSheet.absoluteFill,
+                {
+                  transform: [
+                    {
+                      rotate: giro.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', '360deg'],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              <Pizza />
+            </Animated.View>
+          </Animated.View>
+        )}
       </View>
     </View>
   );
@@ -440,73 +556,89 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    left: 16,
-    right: 16,
+    left: 12,
+    right: 12,
   },
-  sombra: {
-    borderRadius: 34,
+  barra: {
+    height: ALTO,
+    borderRadius: RADIO_BARRA,
+    borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
     shadowRadius: 20,
     elevation: 12,
   },
-  sombraOscura: {
-    // En oscuro la sombra negra casi no se ve; se refuerza para dar profundidad
-    shadowOpacity: 0.6,
-    shadowRadius: 24,
-  },
-  barra: {
-    flexDirection: 'row',
-    borderRadius: 34,
-    overflow: 'hidden',
-    padding: PADDING,
-  },
-  indicador: {
+  // Franja de arriba donde se ven las ondas (más corta que la barra para no tapar los nombres)
+  ondasClip: {
     position: 'absolute',
-    top: PADDING,
-    bottom: PADDING,
-    left: PADDING,
-  },
-  indicadorRelleno: {
-    flex: 1,
-    borderRadius: 28,
-  },
-  indicadorVidrio: {
-    backgroundColor: conTransparencia(MARCA_COLOR, 0.28),
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.8)',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: ZONA_ONDAS,
+    borderTopLeftRadius: RADIO_BARRA,
+    borderTopRightRadius: RADIO_BARRA,
     overflow: 'hidden',
-    shadowColor: MARCA_COLOR,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
   },
-  brillo: {
+  onda: {
     position: 'absolute',
-    top: 2,
-    left: 10,
-    right: 10,
-    height: '42%',
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    left: 0,
+    top: BOLA_CENTRO_Y - ONDA / 2,
+    width: ONDA,
+    height: ONDA,
+    borderRadius: ONDA / 2,
+    borderWidth: 2,
+    borderColor: MARCA_COLOR,
+    backgroundColor: conTransparencia(MARCA_COLOR, 0.12),
   },
-  brilloLupa: {
+  fila: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 28,
+    flexDirection: 'row',
+    paddingHorizontal: PADX,
   },
   item: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
-    height: 58,
+    justifyContent: 'flex-end',
+    paddingBottom: 8,
     gap: 2,
   },
+  cajaIcono: {
+    height: 24,
+    minWidth: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   etiqueta: {
-    fontSize: 10,
+    fontSize: 10.5,
     letterSpacing: 0.2,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 6,
+    maxWidth: '100%',
+  },
+  // Sin sombra ni elevation: en Android esa sombra se extendía hacia abajo
+  // y oscurecía los nombres. La sombra ahora es dibujada y queda pegada a la pizza.
+  bola: {
+    position: 'absolute',
+    left: 0,
+    top: BOLA_CENTRO_Y - RADIO_BOLA,
+    width: BOLA,
+    height: BOLA,
+  },
+  sombraBola: {
+    position: 'absolute',
+    left: -1,
+    top: 2,
+    width: BOLA + 2,
+    height: BOLA + 2,
+    borderRadius: (BOLA + 2) / 2,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
+  sombraBolaGrande: {
+    position: 'absolute',
+    left: -3,
+    top: 2,
+    width: BOLA + 6,
+    height: BOLA + 6,
+    borderRadius: (BOLA + 6) / 2,
+    backgroundColor: 'rgba(0,0,0,0.08)',
   },
   badge: {
     position: 'absolute',
@@ -523,7 +655,7 @@ const styles = StyleSheet.create({
   badgeTexto: {
     color: '#FFFFFF',
     fontFamily: 'Poppins_700Bold',
-    fontSize: 9,
+    fontSize: 10,
     lineHeight: 12,
   },
 });

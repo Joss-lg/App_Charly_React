@@ -1,15 +1,14 @@
 // src/screens/HomeScreen.js
-// Inicio: header rojo de marca, buscador, filtros, banner, tamaños y lista de productos.
+// Inicio: header rojo con logo grande y libre, filtros con botón de tema fijo, banner, tamaños y lista de productos.
 
-import { useState, useMemo, useRef, useCallback, useDeferredValue } from 'react';
+import { useState, useMemo, useRef, useCallback, useDeferredValue, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
-  TouchableOpacity, TextInput, Pressable, RefreshControl,
-  Animated, Platform,
+  TouchableOpacity, Pressable, RefreshControl,
+  Animated, Easing, Platform, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useScrollToTop } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,34 +23,14 @@ import TarjetaTamano from '../components/TarjetaTamano';
 import AlertaPaquetes from '../components/AlertaPaquetes';
 import { esPaqueteDePromos } from '../data/paquetes';
 import { MARCA, COLORES } from '../config/marca';
-import {
-  IconoBuscar, IconoPin, IconoSol, IconoLuna, IconoCerrar,
-} from '../components/IconosUI';
 
 const ROJO = COLORES.primario;
-const DEGRADADO_LOGO = [COLORES.primarioClaro, COLORES.primario, COLORES.primarioOscuro];
 const ES_ANDROID = Platform.OS === 'android';
 
 const TARJETAS_ANIMADAS = 6;
 const JALON_PARA_VERLO = 80;
 
 const LOGO = require('../../assets/charly-logo.png');
-
-const SUGERENCIAS = ['Pepperoni', 'Hawaiana', 'Mexicana', 'Alitas', 'Refresco'];
-
-function normalizar(texto) {
-  return texto
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '');
-}
-
-function coincide(producto, palabras) {
-  const texto = normalizar(
-    `${producto.nombre} ${producto.descripcion} ${producto.categoria} ${producto.subcategoria ?? ''}`
-  );
-  return palabras.every((palabra) => texto.includes(palabra));
-}
 
 export default function HomeScreen() {
   const { tema, modoOscuro, toggleTema } = useTema();
@@ -61,10 +40,9 @@ export default function HomeScreen() {
   } = useDatos();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
   const [categoriaActiva, setCategoriaActiva] = useState('Todos');
   const [subcategoria, setSubcategoria] = useState('Todas');
-  const [busqueda, setBusqueda] = useState('');
-  const [buscadorActivo, setBuscadorActivo] = useState(false);
   const [refrescando, setRefrescando] = useState(false);
 
   const scrollRef = useRef(null);
@@ -75,6 +53,90 @@ export default function HomeScreen() {
   const medidas = useRef({ contenido: 0, visible: 0 });
   const empezoAbajo = useRef(false);
   const [maxScroll, setMaxScroll] = useState(0);
+
+  // ── Botón de modo claro/oscuro: salpicadura roja ──
+  // Un círculo rojo crece desde el botón y cubre la pantalla; ya cubierta, se cambia
+  // el modo y el rojo se desvanece mostrando el modo nuevo.
+  const rootRef = useRef(null);
+  const botonRef = useRef(null);
+  const splashActivo = useRef(false);
+  const [origenSplash, setOrigenSplash] = useState({ x: 0, y: 0 });
+  const splashEscala = useRef(new Animated.Value(0.01)).current;
+  const splashOpacidad = useRef(new Animated.Value(0)).current;
+  const pulso = useRef(new Animated.Value(1)).current;
+  const iconoPop = useRef(new Animated.Value(1)).current;
+  const primeraVez = useRef(true);
+
+  // Radio suficiente para cubrir toda la pantalla desde cualquier punto
+  const radioSplash = Math.hypot(anchoPantalla, altoPantalla);
+
+  // El icono (sol o luna) aparece girando y con rebote cuando cambia el modo
+  useEffect(() => {
+    if (primeraVez.current) {
+      primeraVez.current = false;
+      return;
+    }
+    iconoPop.setValue(0);
+    Animated.spring(iconoPop, {
+      toValue: 1,
+      damping: 7,
+      stiffness: 140,
+      useNativeDriver: true,
+    }).start();
+  }, [modoOscuro]);
+
+  const giroIcono = iconoPop.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['-120deg', '0deg'],
+  });
+
+  const lanzarSplash = (x, y) => {
+    setOrigenSplash({ x, y });
+    splashEscala.setValue(0.01);
+    splashOpacidad.setValue(1);
+    Animated.timing(splashEscala, {
+      toValue: 1,
+      duration: 450,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => {
+      toggleTema(); // la pantalla ya está cubierta de rojo: se cambia el modo
+      Animated.timing(splashOpacidad, {
+        toValue: 0,
+        duration: 380,
+        delay: 120,
+        useNativeDriver: true,
+      }).start(() => {
+        splashActivo.current = false;
+      });
+    });
+  };
+
+  const alCambiarTema = () => {
+    if (splashActivo.current) return;
+    splashActivo.current = true;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
+    Animated.sequence([
+      Animated.timing(pulso, { toValue: 0.85, duration: 90, useNativeDriver: true }),
+      Animated.spring(pulso, { toValue: 1, damping: 6, stiffness: 180, useNativeDriver: true }),
+    ]).start();
+
+    const raiz = rootRef.current;
+    const boton = botonRef.current;
+    if (!raiz || !boton) {
+      // Por si no se pudo medir: cambia el modo sin efecto
+      toggleTema();
+      splashActivo.current = false;
+      return;
+    }
+    // Mide dónde está el botón para que la salpicadura salga de ahí
+    raiz.measureInWindow((rx, ry) => {
+      boton.measureInWindow((bx, by, bw, bh) => {
+        lanzarSplash(bx - rx + bw / 2, by - ry + bh / 2);
+      });
+    });
+  };
 
   const actualizarMax = () => {
     const m = Math.max(0, Math.round(medidas.current.contenido - medidas.current.visible));
@@ -123,12 +185,9 @@ export default function HomeScreen() {
 
   const categoriaLista = useDeferredValue(categoriaActiva);
   const subcategoriaLista = useDeferredValue(subcategoria);
-  const busquedaLista = useDeferredValue(busqueda);
 
-  const buscando = busqueda.trim().length > 0;
-  const buscandoLista = busquedaLista.trim().length > 0;
-  const viendoPizzas = categoriaLista === 'Pizzas' && !buscandoLista;
-  const mostrarBanner = !buscandoLista && categoriaLista === 'Todos';
+  const viendoPizzas = categoriaLista === 'Pizzas';
+  const mostrarBanner = categoriaLista === 'Todos';
 
   const sinConexion = Boolean(error) && !cargando;
   const mostrarAvisoSinRed = sinConexion && productos.length > 0;
@@ -166,15 +225,8 @@ export default function HomeScreen() {
   }, [productosInicio]);
 
   const productosFiltrados = useMemo(() => {
-    const palabras = normalizar(busquedaLista).split(/\s+/).filter(Boolean);
-
     if (categoriaLista === 'Favoritos') {
-      const favs = productosInicio.filter((p) => favoritos.includes(p.id));
-      return palabras.length ? favs.filter((p) => coincide(p, palabras)) : favs;
-    }
-
-    if (palabras.length) {
-      return productosInicio.filter((p) => coincide(p, palabras));
+      return productosInicio.filter((p) => favoritos.includes(p.id));
     }
 
     if (categoriaLista === 'Todos') return productosInicio;
@@ -184,7 +236,7 @@ export default function HomeScreen() {
       lista = lista.filter((p) => p.subcategoria === subcategoriaLista);
     }
     return lista;
-  }, [categoriaLista, subcategoriaLista, busquedaLista, favoritos, productosInicio]);
+  }, [categoriaLista, subcategoriaLista, favoritos, productosInicio]);
 
   const posiciones = useMemo(() => {
     const mapa = new Map();
@@ -194,12 +246,9 @@ export default function HomeScreen() {
 
   let tituloProductos = 'TODOS LOS PRODUCTOS';
   if (categoriaLista === 'Favoritos') tituloProductos = 'FAVORITOS';
-  else if (buscandoLista) tituloProductos = 'RESULTADOS';
   else if (categoriaLista !== 'Todos') tituloProductos = categoriaLista.toUpperCase();
 
-  const textoContador = buscandoLista
-    ? `${productosFiltrados.length} ${productosFiltrados.length === 1 ? 'resultado' : 'resultados'} para "${busquedaLista.trim()}"`
-    : `${productosFiltrados.length} productos disponibles`;
+  const textoContador = `${productosFiltrados.length} productos disponibles`;
 
   let vacio;
   if (productos.length === 0 && sinConexion) {
@@ -215,19 +264,12 @@ export default function HomeScreen() {
       titulo: 'Cargando el menú...',
       texto: 'Esto solo tarda unos segundos.',
     };
-  } else if (categoriaLista === 'Favoritos' && !buscandoLista) {
+  } else if (categoriaLista === 'Favoritos') {
     vacio = {
       icono: 'heart-outline',
       titulo: 'Aún no tienes favoritos',
       texto: 'Toca el corazón de cualquier producto para guardarlo aquí.',
       boton: { texto: 'Ver el menú', alPresionar: () => cambiarCategoria('Todos') },
-    };
-  } else if (buscandoLista) {
-    vacio = {
-      icono: 'search-outline',
-      titulo: 'Sin resultados',
-      texto: `No encontramos "${busquedaLista.trim()}". Prueba con otra palabra.`,
-      boton: { texto: 'Borrar búsqueda', alPresionar: () => setBusqueda('') },
     };
   } else {
     vacio = {
@@ -241,18 +283,18 @@ export default function HomeScreen() {
   const textoAviso = modoOscuro ? '#F2A5A5' : '#9B1C1C';
   const alturaLogoEscondido = Math.max(insets.bottom - 6, 10) + 70 + 14;
 
-  // Colores del buscador (siempre claro, debajo del header rojo)
-  const fondoBuscador = modoOscuro ? '#1A1A1A' : '#FFFFFF';
-  const fondoCajaBusqueda = modoOscuro ? '#2A2A2A' : '#F2F2F2';
-  const colorIconoSuave = '#8A8A8A';
-
   return (
-    <SafeAreaView edges={['top']} style={[styles.safeArea, { backgroundColor: ROJO }]}>
+    <SafeAreaView
+      ref={rootRef}
+      collapsable={false}
+      edges={['top']}
+      style={[styles.safeArea, { backgroundColor: ROJO }]}
+    >
       <Animated.ScrollView
         ref={scrollRef}
         style={{ backgroundColor: tema.fondo }}
         showsVerticalScrollIndicator={false}
-        stickyHeaderIndices={[2]}
+        stickyHeaderIndices={[1]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         scrollEventThrottle={16}
@@ -273,102 +315,59 @@ export default function HomeScreen() {
           />
         }
       >
-        {/* ── HEADER ROJO ── */}
+        {/* ── HEADER ROJO: solo el logo, grande y sin margen ── */}
         <View style={styles.header}>
+          <Image
+            source={LOGO}
+            style={styles.logoLibre}
+            contentFit="contain"
+            accessibilityLabel={`Logo de ${MARCA.nombre}`}
+          />
+        </View>
 
-          {/* Logotipo centrado */}
-          <View style={styles.headerLogoWrap}>
-            <View style={styles.logoCircle}>
-              <Image
-                source={LOGO}
-                style={styles.logoImagen}
-                contentFit="contain"
-                accessibilityLabel={`Logo de ${MARCA.nombre}`}
+        {/* ── FILTROS (sticky) ──
+            Importante: una vista "sticky" ignora el acomodo en fila de lo que lleva dentro.
+            Por eso aquí hay DOS vistas: la de afuera es la sticky (solo lleva el fondo)
+            y la de adentro es la que acomoda el botón y los filtros en una fila. */}
+        <View style={{ backgroundColor: tema.fondo }}>
+          <View style={styles.filtrosFila}>
+            <Animated.View style={[styles.botonTemaWrap, { transform: [{ scale: pulso }] }]}>
+              <View ref={botonRef} collapsable={false}>
+                <TouchableOpacity
+                  style={styles.botonTema}
+                  onPress={alCambiarTema}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={modoOscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+                >
+                  <Animated.View
+                    style={[
+                      styles.iconoTema,
+                      { transform: [{ scale: iconoPop }, { rotate: giroIcono }] },
+                    ]}
+                  >
+                    <Ionicons
+                      name={modoOscuro ? 'moon' : 'sunny'}
+                      size={modoOscuro ? 20 : 22}
+                      color="#FFFFFF"
+                    />
+                  </Animated.View>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+
+            <View style={styles.filtrosLista}>
+              <FiltrosCategorias
+                categoriaActiva={categoriaActiva}
+                onSelect={cambiarCategoria}
               />
             </View>
           </View>
-
-          {/* Botones centrados debajo del logo */}
-          <View style={styles.headerBotones}>
-            {/* Botón modo claro/oscuro */}
-            <TouchableOpacity
-              style={styles.botonRedondo}
-              onPress={toggleTema}
-              activeOpacity={0.7}
-            >
-              {modoOscuro
-                ? <Ionicons name="moon" size={18} color="#FFFFFF" />
-                : <Ionicons name="sunny" size={19} color="#FFFFFF" />}
-            </TouchableOpacity>
-
-            {/* Botón sucursales */}
-            <TouchableOpacity
-              style={styles.sucursalBtn}
-              onPress={() => navigation.navigate('Sucursales')}
-              activeOpacity={0.7}
-            >
-              <IconoPin color="#FFFFFF" size={14} />
-              <Text style={styles.sucursalTexto}>Sucursales</Text>
-            </TouchableOpacity>
-          </View>
-
         </View>
 
-        {/* ── BARRA DE BÚSQUEDA (debajo del header, fondo del tema) ── */}
-        <View style={[styles.searchWrapper, { backgroundColor: fondoBuscador }]}>
-          <View
-            style={[
-              styles.searchBox,
-              { backgroundColor: fondoCajaBusqueda },
-              buscadorActivo && styles.searchBoxActivo,
-            ]}
-          >
-            <IconoBuscar color={buscadorActivo ? ROJO : colorIconoSuave} size={18} />
-            <TextInput
-              placeholder="Busca pizza, alitas, refresco..."
-              placeholderTextColor={modoOscuro ? '#6A6A6A' : '#9A9A9A'}
-              value={busqueda}
-              onChangeText={setBusqueda}
-              onFocus={() => setBuscadorActivo(true)}
-              onBlur={() => setBuscadorActivo(false)}
-              returnKeyType="search"
-              autoCorrect={false}
-              style={[styles.searchInput, { color: tema.texto, fontFamily: 'Poppins_400Regular' }]}
-            />
-            {busqueda.length > 0 && (
-              <TouchableOpacity
-                onPress={() => setBusqueda('')}
-                style={[styles.botonLimpiar, { backgroundColor: modoOscuro ? '#3A3A3A' : '#DDDDDD' }]}
-              >
-                <IconoCerrar color={modoOscuro ? '#CCCCCC' : '#666666'} size={11} />
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {buscadorActivo && !buscando && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              contentContainerStyle={styles.sugerencias}
-            >
-              {SUGERENCIAS.map((s) => (
-                <Pressable
-                  key={s}
-                  onPress={() => setBusqueda(s)}
-                  style={({ pressed }) => [
-                    styles.sugerencia,
-                    { borderColor: modoOscuro ? '#3A3A3A' : '#E4E4E4' },
-                    pressed && { opacity: 0.6 },
-                  ]}
-                >
-                  <Text style={[styles.sugerenciaTexto, { color: tema.textoSecundario }]}>{s}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          )}
-
-          {mostrarAvisoSinRed && (
+        {/* Aviso de sin internet */}
+        {mostrarAvisoSinRed && (
+          <View style={styles.avisoWrap}>
             <View style={[styles.avisoSinRed, { backgroundColor: fondoAviso }]}>
               <Ionicons name="cloud-offline-outline" size={15} color={textoAviso} />
               <Text style={[styles.avisoSinRedTexto, { color: textoAviso }]} numberOfLines={1}>
@@ -378,16 +377,8 @@ export default function HomeScreen() {
                 <Text style={styles.avisoSinRedBoton}>Reintentar</Text>
               </Pressable>
             </View>
-          )}
-        </View>
-
-        {/* ── FILTROS (sticky) ── */}
-        <View style={[styles.filtrosSticky, { backgroundColor: tema.fondo }]}>
-          <FiltrosCategorias
-            categoriaActiva={categoriaActiva}
-            onSelect={cambiarCategoria}
-          />
-        </View>
+          </View>
+        )}
 
         {/* Banner y promos */}
         <View style={mostrarBanner ? null : styles.oculto}>
@@ -541,6 +532,23 @@ export default function HomeScreen() {
         <Text style={styles.logoEscondidoTexto}>{MARCA.lema}</Text>
       </Animated.View>
 
+      {/* Salpicadura roja del cambio de modo (siempre montada, invisible en reposo) */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.splash,
+          {
+            width: radioSplash * 2,
+            height: radioSplash * 2,
+            borderRadius: radioSplash,
+            left: origenSplash.x - radioSplash,
+            top: origenSplash.y - radioSplash,
+            opacity: splashOpacidad,
+            transform: [{ scale: splashEscala }],
+          },
+        ]}
+      />
+
       <AlertaPaquetes oscuro={modoOscuro} onVerPaquete={abrirPaqueteDeAlerta} />
     </SafeAreaView>
   );
@@ -550,107 +558,77 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   oculto: { display: 'none' },
 
-  // ── HEADER ROJO ──
+  // ── HEADER ROJO (solo logo, igual en modo claro y oscuro) ──
   header: {
-    alignItems: 'center',           // todo centrado horizontalmente
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 18,
     backgroundColor: ROJO,
-  },
-  // Contenedor del logo (centrado)
-  headerLogoWrap: {
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  logoCircle: {
-    width: 72,                      // más grande al estar solo
-    height: 72,
-    borderRadius: 36,
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
+    height: 170,
+    overflow: 'hidden',             // lo que sobre del logo ampliado se corta
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 5,
-    borderWidth: 2.5,
-    borderColor: 'rgba(255,255,255,0.6)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 6,
   },
+  // Logo grande y libre: sin círculo, sin borde, sin sombra, sin margen.
+  // Si aún ves margen, sube el scale (1.4 -> 1.6). Si se corta, bájalo.
+  logoLibre: {
+    width: '100%',
+    height: '100%',
+    transform: [{ scale: 1.4 }],
+  },
+  // Imagen del logo escondido (círculo de abajo)
   logoImagen: {
     width: '100%',
     height: '100%',
   },
-  // Fila de botones debajo del logo
-  headerBotones: {
+
+  // ── FILTROS + BOTÓN DE TEMA (en una fila) ──
+  filtrosFila: {
     flexDirection: 'row',
+    alignItems: 'center',           // el botón queda centrado con los filtros
+    paddingTop: 12,
+    paddingBottom: 8,
+    paddingLeft: 16,
+  },
+  // Los filtros ya traen su propio margen a la izquierda; se resta para que el botón quede pegado
+  filtrosLista: {
+    flex: 1,
+    marginLeft: -8,
+  },
+  // zIndex: si un filtro se desliza hacia el botón, pasa por debajo de él
+  botonTemaWrap: {
+    zIndex: 2,
+  },
+  botonTema: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: ROJO,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
+    shadowColor: ROJO,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  botonRedondo: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+  iconoTema: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sucursalBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    height: 36,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-  },
-  sucursalTexto: {
-    fontFamily: 'Poppins_600SemiBold',
-    fontSize: 12,
-    color: '#FFFFFF',
   },
 
-  // ── BUSCADOR ──
-  searchWrapper: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 10,
+  // ── SALPICADURA DEL CAMBIO DE MODO ──
+  splash: {
+    position: 'absolute',
+    backgroundColor: ROJO,
   },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    height: 46,
-    gap: 10,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-  },
-  searchBoxActivo: { borderColor: ROJO },
-  searchInput: { flex: 1, fontSize: 13, padding: 0 },
-  botonLimpiar: {
-    width: 20, height: 20, borderRadius: 10,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  sugerencias: { gap: 8, paddingTop: 10 },
-  sugerencia: {
-    borderWidth: 1, borderRadius: 16,
-    paddingHorizontal: 12, paddingVertical: 6,
-  },
-  sugerenciaTexto: { fontFamily: 'Poppins_400Regular', fontSize: 12 },
+
+  // ── AVISO SIN INTERNET ──
+  avisoWrap: { paddingHorizontal: 16, paddingTop: 4 },
   avisoSinRed: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginTop: 10,
+    borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8,
   },
   avisoSinRedTexto: { flex: 1, fontFamily: 'Poppins_600SemiBold', fontSize: 11 },
   avisoSinRedBoton: { color: ROJO, fontFamily: 'Poppins_700Bold', fontSize: 12 },
-
-  // ── FILTROS ──
-  filtrosSticky: { paddingVertical: 8 },
 
   // ── SECCIONES ──
   seccion: { marginTop: 20, paddingHorizontal: 16 },

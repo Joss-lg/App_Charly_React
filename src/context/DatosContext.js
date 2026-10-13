@@ -1,18 +1,26 @@
 // src/context/DatosContext.js
 // Descarga de Supabase el menú, tamaños, promociones, avisos y sucursales.
 // - Primero muestra la copia guardada en el teléfono (instantáneo) y luego lo nuevo.
-// - Entrega "sucursales" (todas) y "sucursal" (la primera), para las pantallas
-//   que todavía muestran una sola.
+// - Se descarga TODO una sola vez y se entrega solo lo de la sucursal elegida
+//   (ver SucursalContext). Así cambiar de sucursal es instantáneo y funciona sin internet.
+// - Menú: un catálogo único. La tabla "producto_sucursal" solo tiene filas cuando una
+//   sucursal cambia algo (no vende el producto, o lo vende a otro precio).
+// - Promociones, avisos y tamaños: columna "sucursal_id". Vacía = para todas las sucursales.
+// - Entrega "sucursales" (todas) y "sucursal" (la elegida, o la primera si no hay elegida).
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+} from 'react';
 import { AppState, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, supabaseConfigurado } from '../lib/supabase';
 import { sucursal as sucursalLocal } from '../data/sucursal';
 import { MARCA } from '../config/marca';
+import { useSucursal } from './SucursalContext';
 
 const DatosContext = createContext();
-const CLAVE_CACHE = `${MARCA.prefijoGuardado}:datosCache_v1`;
+// v2: la copia guardada ahora incluye "producto_sucursal" y la sucursal de cada registro
+const CLAVE_CACHE = `${MARCA.prefijoGuardado}:datosCache_v2`;
 
 // Cambiar a true solo para diagnosticar problemas de conexión (muestra alertas)
 const DEPURAR = false;
@@ -44,6 +52,14 @@ const convertirProducto = (p) => ({
   soloPromos: Boolean(p.solo_promos),
 });
 
+// Excepciones del menú por sucursal
+const convertirProductoSucursal = (r) => ({
+  productoId: r.producto_id,
+  sucursalId: r.sucursal_id,
+  disponible: r.disponible !== false,
+  precio: r.precio == null ? null : Number(r.precio),
+});
+
 const convertirPromocion = (p) => ({
   id: p.id,
   titulo: p.titulo,
@@ -53,6 +69,7 @@ const convertirPromocion = (p) => ({
   emoji: p.icono === 'delivery' ? '🛵' : '🍕',
   etiqueta: p.etiqueta ?? '',
   dia: p.dia ?? null,
+  sucursalId: p.sucursal_id ?? null,
 });
 
 const convertirSucursal = (s) => ({
@@ -78,6 +95,7 @@ const convertirNotificacion = (n) => ({
   mensaje: n.mensaje ?? '',
   destino: n.destino,
   fecha: n.fecha,
+  sucursalId: n.sucursal_id ?? null,
 });
 
 // Tamaños de pizza (Chica, Mediana, Grande, Familiar)
@@ -87,19 +105,66 @@ const convertirTamano = (t) => ({
   rebanadas: t.rebanadas,
   precio: Number(t.precio),
   orden: t.orden ?? 0,
+  sucursalId: t.sucursal_id ?? null,
 });
 
 // Sin conexión la primera vez: solo los datos locales de la sucursal (sin menú falso)
 const DATOS_INICIALES = {
   productos: [],
+  productoSucursal: [],
   promociones: [],
   sucursales: [sucursalLocal],
-  sucursal: sucursalLocal,
   notificaciones: [],
   tamanos: [],
 };
 
+// ── Filtro por sucursal ──
+
+// Un registro es de esta sucursal si es de ella o si no tiene sucursal (= para todas)
+const esDeLaSucursal = (item, sucursalId) =>
+  item.sucursalId == null || item.sucursalId === sucursalId;
+
+function filtrarPorSucursal(datos, sucursalId) {
+  const elegida = datos.sucursales.find((s) => s.id === sucursalId) ?? null;
+
+  // Sin sucursal elegida (o todavía no cargan las sucursales): se entrega todo sin filtrar
+  if (sucursalId == null || !elegida) {
+    return { ...datos, sucursal: datos.sucursales[0] };
+  }
+
+  // Menú: se quitan los no disponibles y se aplica el precio propio de la sucursal
+  const reglas = new Map();
+  datos.productoSucursal
+    .filter((r) => r.sucursalId === sucursalId)
+    .forEach((r) => reglas.set(r.productoId, r));
+
+  const productos = datos.productos
+    .filter((p) => reglas.get(p.id)?.disponible !== false)
+    .map((p) => {
+      const regla = reglas.get(p.id);
+      return regla?.precio != null ? { ...p, precio: regla.precio } : p;
+    });
+
+  // Tamaños: si la sucursal tiene uno propio con el mismo nombre, gana el de la sucursal
+  const propios = datos.tamanos.filter((t) => t.sucursalId === sucursalId);
+  const nombresPropios = new Set(propios.map((t) => t.nombre));
+  const generales = datos.tamanos.filter(
+    (t) => t.sucursalId == null && !nombresPropios.has(t.nombre)
+  );
+  const tamanos = [...generales, ...propios].sort((a, b) => a.orden - b.orden);
+
+  return {
+    ...datos,
+    productos,
+    tamanos,
+    promociones: datos.promociones.filter((p) => esDeLaSucursal(p, sucursalId)),
+    notificaciones: datos.notificaciones.filter((n) => esDeLaSucursal(n, sucursalId)),
+    sucursal: elegida,
+  };
+}
+
 export function DatosProvider({ children }) {
+  const { sucursalId, cambiarSucursal } = useSucursal();
   const [datos, setDatos] = useState(DATOS_INICIALES);
   const [origen, setOrigen] = useState('local'); // 'local' | 'cache' | 'supabase'
   const [cargando, setCargando] = useState(false);
@@ -116,16 +181,19 @@ export function DatosProvider({ children }) {
     setCargando(true);
 
     try {
-      const [prods, promos, sucs, notifs, tams] = await Promise.all([
+      const [prods, prodSuc, promos, sucs, notifs, tams] = await Promise.all([
         supabase.from('productos').select('*').order('orden'),
+        supabase.from('producto_sucursal').select('*'),
         supabase.from('promociones').select('*').order('orden'),
         supabase.from('sucursales').select('*').order('id'),
         supabase.from('notificaciones').select('*').order('fecha', { ascending: false }),
         supabase.from('tamanos').select('*').order('orden'),
       ]);
 
-      const nombres = ['productos', 'promociones', 'sucursales', 'notificaciones', 'tamanos'];
-      [prods, promos, sucs, notifs, tams].forEach((r, i) => {
+      const nombres = [
+        'productos', 'producto_sucursal', 'promociones', 'sucursales', 'notificaciones', 'tamanos',
+      ];
+      [prods, prodSuc, promos, sucs, notifs, tams].forEach((r, i) => {
         if (r.error) throw new Error(`Tabla ${nombres[i]}: ${r.error.message}`);
       });
 
@@ -135,9 +203,9 @@ export function DatosProvider({ children }) {
 
       const nuevos = {
         productos: prods.data.map(convertirProducto),
+        productoSucursal: prodSuc.data.map(convertirProductoSucursal),
         promociones: promos.data.map(convertirPromocion),
         sucursales: listaSucursales,
-        sucursal: listaSucursales[0],
         notificaciones: notifs.data.map(convertirNotificacion),
         tamanos: tams.data.map(convertirTamano),
       };
@@ -187,8 +255,17 @@ export function DatosProvider({ children }) {
     return () => sub.remove();
   }, [descargar]);
 
+  // Si la sucursal guardada ya no existe en Supabase, se vuelve a pedir que elija
+  useEffect(() => {
+    if (origen !== 'supabase' || sucursalId == null) return;
+    if (!datos.sucursales.some((s) => s.id === sucursalId)) cambiarSucursal();
+  }, [origen, sucursalId, datos.sucursales, cambiarSucursal]);
+
+  // Lo que ven las pantallas: solo lo de la sucursal elegida
+  const datosVista = useMemo(() => filtrarPorSucursal(datos, sucursalId), [datos, sucursalId]);
+
   return (
-    <DatosContext.Provider value={{ ...datos, origen, cargando, error, recargar: descargar }}>
+    <DatosContext.Provider value={{ ...datosVista, origen, cargando, error, recargar: descargar }}>
       {children}
     </DatosContext.Provider>
   );
