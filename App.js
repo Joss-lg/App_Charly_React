@@ -1,5 +1,5 @@
 // App.js
-// - Mantiene el splash (logo) hasta que las fuentes Poppins están listas
+// - Mantiene el splash (logo) hasta que las fuentes (Poppins y Lilita One) están listas
 //   y la primera pantalla ya se dibujó; luego lo quita (con desvanecido en la app instalada).
 // - Si el cliente todavía no eligió sucursal, muestra la pantalla de selección.
 // - Al tocar una notificación, abre la pantalla de su destino (también con la app cerrada).
@@ -11,6 +11,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts, Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold } from '@expo-google-fonts/poppins';
+import { LilitaOne_400Regular } from '@expo-google-fonts/lilita-one';
 import { View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
@@ -66,6 +67,7 @@ function Root() {
     Poppins_400Regular,
     Poppins_600SemiBold,
     Poppins_700Bold,
+    LilitaOne_400Regular,
   });
 
   // Seguro: si las fuentes no cargan a tiempo, se sigue con la letra del teléfono
@@ -160,7 +162,7 @@ function Root() {
   if (sucursalId == null) {
     return (
       <View style={{ flex: 1, backgroundColor: '#C0392B' }} onLayout={alDibujar}>
-        <StatusBar style="light" />
+        <StatusBar style="light" translucent backgroundColor="transparent" />
         <ElegirSucursalScreen />
       </View>
     );
@@ -168,7 +170,8 @@ function Root() {
 
   return (
     <View style={{ flex: 1, backgroundColor: tema.fondo }} onLayout={alDibujar}>
-      <StatusBar style={tema.statusBar} />
+      {/* Prueba: barra transparente en Android para que el rojo llegue hasta arriba */}
+      <StatusBar style="light" translucent backgroundColor="transparent" />
       <NavigationContainer ref={navegacionRef} theme={temaNavegacion} onReady={alEstarLista}>
         <AppNavigator />
       </NavigationContainer>

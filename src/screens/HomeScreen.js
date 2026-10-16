@@ -1,5 +1,6 @@
 // src/screens/HomeScreen.js
-// Inicio: header rojo con logo grande y libre, filtros con botón de tema fijo, banner, tamaños y lista de productos.
+// Inicio: header rojo con logo grande y animado, filtros con botón de tema fijo, banner, tamaños y lista de productos.
+// Al tocar un tamaño de pizza, se muestran todas las pizzas con su precio en ese tamaño.
 
 import { useState, useMemo, useRef, useCallback, useDeferredValue, useEffect } from 'react';
 import {
@@ -20,6 +21,7 @@ import PromoCard from '../components/PromoCard';
 import FiltrosCategorias from '../components/FiltrosCategorias';
 import ProductCard from '../components/ProductCard';
 import TarjetaTamano from '../components/TarjetaTamano';
+import ListaPizzasTamano from '../components/ListaPizzasTamano';
 import AlertaPaquetes from '../components/AlertaPaquetes';
 import { esPaqueteDePromos } from '../data/paquetes';
 import { MARCA, COLORES } from '../config/marca';
@@ -29,8 +31,16 @@ const ES_ANDROID = Platform.OS === 'android';
 
 const TARJETAS_ANIMADAS = 6;
 const JALON_PARA_VERLO = 80;
+const ALTO_HEADER = 170;
+const FUENTE_TITULOS = 'LilitaOne_400Regular';
 
 const LOGO = require('../../assets/charly-logo.png');
+
+// "Mediana" -> "medianas", "Familiar" -> "familiares"
+const pluralDe = (nombre = '') => {
+  const n = nombre.toLowerCase();
+  return n.endsWith('r') ? `${n}es` : `${n}s`;
+};
 
 export default function HomeScreen() {
   const { tema, modoOscuro, toggleTema } = useTema();
@@ -44,6 +54,7 @@ export default function HomeScreen() {
   const [categoriaActiva, setCategoriaActiva] = useState('Todos');
   const [subcategoria, setSubcategoria] = useState('Todas');
   const [refrescando, setRefrescando] = useState(false);
+  const [tamanoElegido, setTamanoElegido] = useState(null);
 
   const scrollRef = useRef(null);
   useScrollToTop(scrollRef);
@@ -53,6 +64,90 @@ export default function HomeScreen() {
   const medidas = useRef({ contenido: 0, visible: 0 });
   const empezoAbajo = useRef(false);
   const [maxScroll, setMaxScroll] = useState(0);
+
+  // ── Logo del header: entrada con rebote, respiración, parallax y toque ──
+  const logoEntrada = useRef(new Animated.Value(0)).current;
+  const logoFlota = useRef(new Animated.Value(0)).current;
+  const logoToque = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    // Entrada una sola vez y luego flota y respira sin parar
+    const principal = Animated.sequence([
+      Animated.spring(logoEntrada, {
+        toValue: 1,
+        friction: 5,
+        tension: 55,
+        useNativeDriver: true,
+      }),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(logoFlota, {
+            toValue: 1,
+            duration: 2400,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(logoFlota, {
+            toValue: 0,
+            duration: 2400,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      ),
+    ]);
+
+    principal.start();
+    return () => {
+      principal.stop();
+    };
+  }, []);
+
+  const alTocarLogo = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    logoToque.stopAnimation();
+    Animated.sequence([
+      Animated.timing(logoToque, { toValue: 0.9, duration: 90, useNativeDriver: true }),
+      Animated.spring(logoToque, { toValue: 1, friction: 3, tension: 140, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const logoOpacidad = logoEntrada.interpolate({
+    inputRange: [0, 0.35],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+  const logoEscalaEntrada = logoEntrada.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.5, 1],
+  });
+  const logoCae = logoEntrada.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-46, 0],
+  });
+  const logoGiro = logoEntrada.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['-7deg', '0deg'],
+  });
+  const logoSube = logoFlota.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -7],
+  });
+  const logoRespira = logoFlota.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.03],
+  });
+  // Parallax: al bajar la lista el logo se mueve más lento; al jalar para actualizar crece
+  const logoParallax = scrollY.interpolate({
+    inputRange: [-200, 0, ALTO_HEADER],
+    outputRange: [0, 0, ALTO_HEADER * 0.35],
+    extrapolate: 'clamp',
+  });
+  const logoCrece = scrollY.interpolate({
+    inputRange: [-200, 0],
+    outputRange: [1.25, 1],
+    extrapolate: 'clamp',
+  });
 
   // ── Botón de modo claro/oscuro: salpicadura roja ──
   // Un círculo rojo crece desde el botón y cubre la pantalla; ya cubierta, se cambia
@@ -203,16 +298,35 @@ export default function HomeScreen() {
   const cambiarCategoria = useCallback((nombre) => {
     setCategoriaActiva(nombre);
     setSubcategoria('Todas');
+    setTamanoElegido(null);
   }, []);
 
   const abrirPaqueteDeAlerta = () => {
     navigation.navigate('Promos');
   };
 
+  const abrirProducto = useCallback(
+    (id) => navigation.navigate('ProductoDetalle', { id }),
+    [navigation]
+  );
+  const quitarTamano = useCallback(() => setTamanoElegido(null), []);
+
   const productosInicio = useMemo(
     () => productos.filter((p) => !esPaqueteDePromos(p)),
     [productos]
   );
+
+  // Tamaño elegido (si todavía existe en la sucursal) y las pizzas con su precio en ese tamaño
+  const tamanoActual = tamanoElegido !== null ? tamanos[tamanoElegido] ?? null : null;
+  const pizzasDelTamano = useMemo(() => {
+    if (!tamanoActual) return [];
+    return productosInicio
+      .filter((p) => p.categoria === 'Pizzas')
+      .map((p) => {
+        const propio = Array.isArray(p.precios) ? p.precios[tamanoElegido] : null;
+        return { producto: p, precio: propio != null ? propio : tamanoActual.precio };
+      });
+  }, [productosInicio, tamanoActual, tamanoElegido]);
 
   const subcategoriasPizza = useMemo(() => {
     const unicas = [];
@@ -294,7 +408,7 @@ export default function HomeScreen() {
         ref={scrollRef}
         style={{ backgroundColor: tema.fondo }}
         showsVerticalScrollIndicator={false}
-        stickyHeaderIndices={[1]}
+        stickyHeaderIndices={[2]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         scrollEventThrottle={16}
@@ -315,14 +429,48 @@ export default function HomeScreen() {
           />
         }
       >
-        {/* ── HEADER ROJO: solo el logo, grande y sin margen ── */}
+        {/* Bloque rojo que queda ARRIBA del header (se ve al jalar para actualizar).
+            Va dentro del scroll para moverse junto con el logo. No ocupa espacio. */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: -1000,
+            left: 0,
+            right: 0,
+            height: 1000,
+            backgroundColor: ROJO,
+          }}
+        />
+
+        {/* ── HEADER ROJO: logo animado, grande y sin margen ── */}
         <View style={styles.header}>
-          <Image
-            source={LOGO}
-            style={styles.logoLibre}
-            contentFit="contain"
-            accessibilityLabel={`Logo de ${MARCA.nombre}`}
-          />
+          <Pressable onPress={alTocarLogo} style={styles.logoToque}>
+            <Animated.View
+              style={{
+                width: '100%',
+                height: '100%',
+                opacity: logoOpacidad,
+                transform: [
+                  { translateY: logoParallax },
+                  { translateY: logoCae },
+                  { translateY: logoSube },
+                  { rotate: logoGiro },
+                  { scale: logoEscalaEntrada },
+                  { scale: logoRespira },
+                  { scale: logoCrece },
+                  { scale: logoToque },
+                ],
+              }}
+            >
+              <Image
+                source={LOGO}
+                style={styles.logoLibre}
+                contentFit="contain"
+                accessibilityLabel={`Logo de ${MARCA.nombre}`}
+              />
+            </Animated.View>
+          </Pressable>
         </View>
 
         {/* ── FILTROS (sticky) ──
@@ -415,10 +563,28 @@ export default function HomeScreen() {
               contentContainerStyle={styles.tamanosFila}
             >
               {tamanos.map((t, i) => (
-                <TarjetaTamano key={t.id} tamano={t} nivel={i} />
+                <TarjetaTamano
+                  key={t.id}
+                  tamano={t}
+                  nivel={i}
+                  activo={i === tamanoElegido}
+                  onElegir={setTamanoElegido}
+                />
               ))}
             </ScrollView>
           </View>
+        )}
+
+        {/* Todas las pizzas del tamaño elegido */}
+        {viendoPizzas && tamanoActual && (
+          <ListaPizzasTamano
+            key={tamanoActual.id ?? tamanoElegido}
+            titulo={`PIZZAS ${pluralDe(tamanoActual.nombre).toUpperCase()}`}
+            nombreTamano={tamanoActual.nombre}
+            items={pizzasDelTamano}
+            onAbrir={abrirProducto}
+            onCerrar={quitarTamano}
+          />
         )}
 
         {/* Título productos */}
@@ -561,10 +727,14 @@ const styles = StyleSheet.create({
   // ── HEADER ROJO (solo logo, igual en modo claro y oscuro) ──
   header: {
     backgroundColor: ROJO,
-    height: 170,
+    height: ALTO_HEADER,
     overflow: 'hidden',             // lo que sobre del logo ampliado se corta
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  logoToque: {
+    width: '100%',
+    height: '100%',
   },
   // Logo grande y libre: sin círculo, sin borde, sin sombra, sin margen.
   // Si aún ves margen, sube el scale (1.4 -> 1.6). Si se corta, bájalo.
@@ -633,7 +803,7 @@ const styles = StyleSheet.create({
   // ── SECCIONES ──
   seccion: { marginTop: 20, paddingHorizontal: 16 },
   seccionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  seccionTitulo: { fontFamily: 'Poppins_700Bold', fontSize: 13, letterSpacing: 1 },
+  seccionTitulo: { fontFamily: FUENTE_TITULOS, fontSize: 16, letterSpacing: 1.2 },
   lineaMarca: { flex: 1, height: 2, backgroundColor: ROJO, marginLeft: 10, borderRadius: 2 },
   contadorTexto: { fontFamily: 'Poppins_400Regular', fontSize: 11, marginBottom: 4, marginTop: 2 },
   promosRow: { flexDirection: 'row', gap: 8, marginTop: 10 },

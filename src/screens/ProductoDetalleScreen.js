@@ -31,8 +31,11 @@ const MARCA_OSCURO = COLORES.primarioOscuro;
 const QUESO_CLARO = '#FFE3A3';
 const QUESO = '#F5A623';
 const QUESO_OSCURO = '#B86E00';
-const LADO_PIZZA_MIN = 16;
-const PASO_PIZZA = 4;
+
+const FUENTE_TITULOS = 'LilitaOne_400Regular';
+const DORADO = '#C9A24B';
+const CREMA = '#F8F2E6';
+const CAFE = '#2A1F14';
 
 const trazo = (color, grosor = 2.2) => ({
   stroke: color, strokeWidth: grosor,
@@ -91,20 +94,6 @@ function IconoCategoria({ tipo, size = 13, grosor = 2, subcategoria = false }) {
   return <Svg width={size} height={size} viewBox="0 0 24 24"><Path d={d} {...trazo(MARCA_COLOR, grosor)} /></Svg>;
 }
 
-function PizzaDorada({ lado, id = 'pz' }) {
-  return (
-    <Svg width={lado} height={lado} viewBox="0 0 24 24">
-      <Degradado id={id} colores={[QUESO_CLARO, QUESO, QUESO_OSCURO]} />
-      <Circle cx="12" cy="12" r="10.5" fill={`url(#${id})`} stroke={QUESO_OSCURO} strokeWidth={1.2} />
-      <Path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7" stroke="rgba(90,50,0,0.35)" strokeWidth={0.9} />
-      <Circle cx="8.5" cy="9" r="1.5" fill="#B3261E" />
-      <Circle cx="15.5" cy="9.8" r="1.4" fill="#B3261E" />
-      <Circle cx="11" cy="15.6" r="1.4" fill="#B3261E" />
-      <Circle cx="16" cy="15" r="1" fill="#B3261E" />
-    </Svg>
-  );
-}
-
 function MedallonInfo({ size = 30 }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 30 30">
@@ -127,28 +116,36 @@ function Etiqueta({ texto, style }) {
   );
 }
 
-function FilaTamano({ i, t, activo, primera, onPress, onLayout, tema, bordeSuave }) {
+// Fila de un tamaño: círculo con aro dorado que se llena de rojo al elegirlo
+function FilaTamano({ t, activo, primera, onPress, onLayout, modoOscuro }) {
   const aparicion = useRef(new Animated.Value(activo ? 1 : 0)).current;
-  const lado = LADO_PIZZA_MIN + Math.min(i, 3) * PASO_PIZZA;
   useEffect(() => {
     Animated.spring(aparicion, { toValue: activo ? 1 : 0, speed: 20, bounciness: activo ? 12 : 0, useNativeDriver: true }).start();
   }, [activo]);
-  const giro = aparicion.interpolate({ inputRange: [0, 1], outputRange: ['-90deg', '0deg'] });
+
+  const colorNombre = modoOscuro ? '#F3E7C4' : CAFE;
+  const colorSecundario = modoOscuro ? '#CDBFA0' : '#7A6A55';
+  const colorPrecio = modoOscuro ? MARCA_CLARO : MARCA_COLOR;
+
   return (
     <Pressable onPress={onPress} onLayout={onLayout}
-      style={({ pressed }) => [styles.filaTamano, !primera && { borderTopWidth: 1, borderTopColor: bordeSuave }, pressed && { opacity: 0.8 }]}
+      style={({ pressed }) => [
+        styles.filaTamano,
+        !primera && { borderTopWidth: 1, borderTopColor: 'rgba(201,162,75,0.4)' },
+        pressed && { opacity: 0.8 },
+      ]}
       accessibilityRole="radio" accessibilityState={{ selected: activo }}
     >
       <View style={styles.tamanoCaja}>
-        <Animated.View style={{ opacity: aparicion, transform: [{ scale: aparicion }, { rotate: giro }] }}>
-          <PizzaDorada lado={lado} id={`pz${i}`} />
-        </Animated.View>
+        <View style={styles.radioAro}>
+          <Animated.View style={[styles.radioPunto, { opacity: aparicion, transform: [{ scale: aparicion }] }]} />
+        </View>
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={[styles.tamanoNombre, { color: tema.texto }]}>{t.nombre}</Text>
-        {t.rebanadas ? <Text style={[styles.tamanoRebanadas, { color: tema.textoSecundario }]}>{t.rebanadas} rebanadas</Text> : null}
+        <Text style={[styles.tamanoNombre, { color: colorNombre }]}>{t.nombre}</Text>
+        {t.rebanadas ? <Text style={[styles.tamanoRebanadas, { color: colorSecundario }]}>{t.rebanadas} rebanadas</Text> : null}
       </View>
-      <Text style={[styles.tamanoPrecio, { color: activo ? tema.precio : tema.texto }]}>${t.precio}</Text>
+      <Text style={[styles.tamanoPrecio, { color: activo ? colorPrecio : colorNombre }]}>${t.precio}</Text>
     </Pressable>
   );
 }
@@ -469,7 +466,7 @@ function CarruselGiratorio({ pizzas, onPresionar }) {
           })}
         </Svg>
 
-        {/* 🍕 Rebanada apunta a la pizza activa */}
+        {/* Rebanada apunta a la pizza activa */}
         <Animated.View style={{
           position: 'absolute', bottom: 0, left: GCX - AGJ_W / 2,
           width: AGJ_W, height: AGJ_L,
@@ -500,7 +497,7 @@ function CarruselGiratorio({ pizzas, onPresionar }) {
   );
 }
 
-// ─── PANTALLA PRINCIPAL ───────────────────────────────────────
+// ─── PANTALLA PRINCIPAL ──────────────────────────────────────
 
 export default function ProductoDetalleScreen({ route, navigation }) {
   const { tema, modoOscuro } = useTema();
@@ -592,9 +589,14 @@ export default function ProductoDetalleScreen({ route, navigation }) {
   }
 
   const esPizza        = producto.categoria === 'Pizzas';
-  const listaTamanos   = esPizza ? [...tamanos].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)) : [];
+  const tamanosBase    = esPizza ? [...tamanos].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)) : [];
+  // Si el producto trae sus propios precios (columna "precios"), se usan en lugar de los de la tabla "tamanos"
+  const preciosPropios = Array.isArray(producto.precios) && producto.precios.length > 0 ? producto.precios : null;
+  const listaTamanos   = preciosPropios
+    ? tamanosBase.map((t, i) => ({ ...t, precio: preciosPropios[i] ?? t.precio }))
+    : tamanosBase;
   const tamano         = tamanoSel !== null ? listaTamanos[tamanoSel] || null : null;
-  const precioMostrado = tamano ? tamano.precio : producto.precio;
+  const precioMostrado = tamano ? tamano.precio : (preciosPropios ? preciosPropios[0] : producto.precio);
   const mostrarDesde   = !tamano && (producto.precioDesde || listaTamanos.length > 0);
   const textoPrecio    = `${mostrarDesde ? 'desde ' : ''}$${precioMostrado}`;
   const nombreConTamano = tamano ? `${producto.nombre} (${tamano.nombre})` : producto.nombre;
@@ -684,6 +686,7 @@ export default function ProductoDetalleScreen({ route, navigation }) {
   const colorAvisoTexto = modoOscuro ? '#F2A5A5' : '#9B1C1C';
   const fondoChip       = modoOscuro ? '#242424' : '#F4F4F4';
   const fondoFooter     = modoOscuro ? '#1A1A1A' : '#FFFFFF';
+  const fondoTabla      = modoOscuro ? '#2A2420' : CREMA;
   const posActual       = tamanoSel !== null ? posiciones[tamanoSel] : null;
 
   return (
@@ -745,18 +748,19 @@ export default function ProductoDetalleScreen({ route, navigation }) {
           {listaTamanos.length > 0 && (
             <Animated.View style={aparecer(5)}>
               <Etiqueta texto="TAMAÑOS" style={{ marginTop: 22 }} />
-              <View style={[styles.tabla, { borderColor: bordeSuave, backgroundColor: tema.card }]}>
+              <View style={[styles.tabla, { borderColor: 'rgba(201,162,75,0.6)', backgroundColor: fondoTabla }]}>
                 {posActual && (
                   <Animated.View pointerEvents="none" style={[styles.indicador, { height: posActual.height, opacity: indicadorOp, transform: [{ translateY: indicadorY }] }]}>
-                    <LinearGradient colors={['rgba(227,30,36,0.18)', 'rgba(227,30,36,0.03)']} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={StyleSheet.absoluteFill} />
+                    <LinearGradient colors={['rgba(227,30,36,0.16)', 'rgba(227,30,36,0.03)']} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={StyleSheet.absoluteFill} />
                     <LinearGradient colors={[MARCA_CLARO, MARCA_COLOR, MARCA_OSCURO]} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={styles.indicadorBarra} />
                   </Animated.View>
                 )}
                 {listaTamanos.map((t, i) => (
-                  <FilaTamano key={t.id ?? t.nombre} i={i} t={t} activo={i === tamanoSel} primera={i === 0}
+                  <FilaTamano key={t.id ?? t.nombre} t={t} activo={i === tamanoSel} primera={i === 0}
                     onPress={() => elegirTamano(i)} onLayout={(e) => guardarPosicion(i, e.nativeEvent.layout)}
-                    tema={tema} bordeSuave={bordeSuave} />
+                    modoOscuro={modoOscuro} />
                 ))}
+                <View pointerEvents="none" style={styles.franjaTabla} />
               </View>
             </Animated.View>
           )}
@@ -844,7 +848,7 @@ const styles = StyleSheet.create({
   barra: { position: 'absolute', top: 0, left: 0, right: 0 },
   barraBorde: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth },
   barraFila: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 10 },
-  barraTitulo: { flex: 1, textAlign: 'center', fontFamily: 'Poppins_600SemiBold', fontSize: 16 },
+  barraTitulo: { flex: 1, textAlign: 'center', fontFamily: FUENTE_TITULOS, fontSize: 18 },
   botonesDerecha: { flexDirection: 'row', gap: 10 },
   botonCircular: { width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.92)', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 3 },
   info: { paddingHorizontal: 20, paddingTop: 18 },
@@ -853,30 +857,33 @@ const styles = StyleSheet.create({
   chipTexto: { fontFamily: 'Poppins_700Bold', fontSize: 11, color: MARCA_CLARO },
   badgeOferta: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#141414', borderRadius: 20, paddingHorizontal: 11, paddingVertical: 5, borderWidth: 1, borderColor: MARCA_COLOR },
   badgeOfertaTexto: { fontFamily: 'Poppins_700Bold', fontSize: 10, color: MARCA_CLARO, letterSpacing: 1 },
-  nombre: { fontFamily: 'Poppins_700Bold', fontSize: 28, lineHeight: 34 },
+  nombre: { fontFamily: FUENTE_TITULOS, fontSize: 30, lineHeight: 36, letterSpacing: 0.3 },
   precioRow: { flexDirection: 'row', alignItems: 'baseline', alignSelf: 'flex-start', gap: 6, marginTop: 4 },
   desde: { fontFamily: 'Poppins_600SemiBold', fontSize: 14 },
-  precio: { fontFamily: 'Poppins_700Bold', fontSize: 32 },
+  precio: { fontFamily: FUENTE_TITULOS, fontSize: 38 },
   moneda: { fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
   linea: { height: 1, marginVertical: 18 },
   etiquetaFila: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   diamante: { width: 7, height: 7, transform: [{ rotate: '45deg' }], borderRadius: 1 },
-  etiqueta: { fontFamily: 'Poppins_600SemiBold', fontSize: 10, letterSpacing: 1.5 },
+  etiqueta: { fontFamily: FUENTE_TITULOS, fontSize: 13, letterSpacing: 1.5 },
   descripcion: { fontFamily: 'Poppins_400Regular', fontSize: 15, lineHeight: 23, marginTop: 6 },
-  tabla: { borderWidth: 1, borderRadius: 16, overflow: 'hidden', marginTop: 10 },
+  tabla: { borderWidth: 1.2, borderRadius: 16, overflow: 'hidden', marginTop: 10 },
+  franjaTabla: { position: 'absolute', top: 0, left: 0, right: 0, height: 4, backgroundColor: MARCA_COLOR },
   indicador: { position: 'absolute', top: 0, left: 0, right: 0 },
   indicadorBarra: { position: 'absolute', top: 8, bottom: 8, left: 0, width: 3, borderRadius: 2 },
-  filaTamano: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  filaTamano: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13 },
   tamanoCaja: { width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
-  tamanoNombre: { fontFamily: 'Poppins_600SemiBold', fontSize: 14 },
+  radioAro: { width: 24, height: 24, borderRadius: 12, borderWidth: 1.6, borderColor: DORADO, alignItems: 'center', justifyContent: 'center' },
+  radioPunto: { width: 13, height: 13, borderRadius: 7, backgroundColor: MARCA_COLOR },
+  tamanoNombre: { fontFamily: FUENTE_TITULOS, fontSize: 17, letterSpacing: 0.3 },
   tamanoRebanadas: { fontFamily: 'Poppins_400Regular', fontSize: 12, marginTop: -2 },
-  tamanoPrecio: { fontFamily: 'Poppins_700Bold', fontSize: 16 },
+  tamanoPrecio: { fontFamily: FUENTE_TITULOS, fontSize: 22 },
   aviso: { flexDirection: 'row', gap: 12, borderRadius: 16, padding: 14, marginTop: 18, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(227,30,36,0.15)' },
   avisoTexto: { flex: 1, fontFamily: 'Poppins_400Regular', fontSize: 12, lineHeight: 17 },
   seccionCarrusel: { marginTop: 28 },
   cajaTambienTeGusta: { borderRadius: 24, paddingTop: 18, paddingHorizontal: 16, paddingBottom: 14, borderWidth: 1, borderColor: 'rgba(227,30,36,0.2)' },
   seccionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  seccionTitulo: { fontFamily: 'Poppins_700Bold', fontSize: 12, letterSpacing: 1 },
+  seccionTitulo: { fontFamily: FUENTE_TITULOS, fontSize: 14, letterSpacing: 1 },
   lineaMarca: { flex: 1, height: 2, marginLeft: 10, borderRadius: 2 },
   pillFrontal: { alignSelf: 'center', backgroundColor: MARCA_COLOR, borderRadius: 18, paddingHorizontal: 18, paddingVertical: 8, maxWidth: 220 },
   nombreFrontal: { fontFamily: 'Poppins_700Bold', fontSize: 11, color: '#FFFFFF', textAlign: 'center', letterSpacing: 0.5 },

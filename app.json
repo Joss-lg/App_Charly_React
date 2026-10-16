@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
+    "backgroundColor": "#E31E24",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.charlypizza.app"

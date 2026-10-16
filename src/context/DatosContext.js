@@ -50,6 +50,8 @@ const convertirProducto = (p) => ({
   oferta: Boolean(p.oferta),
   // Casilla "solo_promos": el producto solo sale en la pestaña Promos
   soloPromos: Boolean(p.solo_promos),
+  // Precios propios por tamaño (Chica, Mediana, Grande, Familiar). Vacío = usa la tabla "tamanos"
+  precios: Array.isArray(p.precios) ? p.precios.map(Number) : null,
 });
 
 // Excepciones del menú por sucursal
@@ -191,7 +193,7 @@ export function DatosProvider({ children }) {
       ]);
 
       const nombres = [
-        'productos', 'producto_sucursal', 'promociones', 'sucursales', 'notificaciones', 'tamanos',
+        'productos', 'producto_sucursal', 'promociones', 'sucursales', 'notificaciones','tamanos',
       ];
       [prods, prodSuc, promos, sucs, notifs, tams].forEach((r, i) => {
         if (r.error) throw new Error(`Tabla ${nombres[i]}: ${r.error.message}`);

@@ -1,9 +1,11 @@
 // src/components/HeroBanner.js
 // Carrusel de arriba del Inicio. Se arma SOLO con lo que hay en Supabase:
 // 1) Bienvenida con el lema y el precio más bajo de los tamaños → abre la primera pizza.
-// 2) Un slide por cada paquete de Promos → lleva a la pestaña Promos.
-// 3) Hasta 2 productos en oferta → abren su detalle.
+// 2) Hasta 2 promociones → llevan a la pestaña Promos.
+// 3) Un slide por cada paquete de Promos → lleva a la pestaña Promos.
+// 4) Hasta 2 productos en oferta → abren su detalle.
 // Se mueve solo, pero se pausa si no estás en Inicio o si el teléfono tiene "Reducir movimiento".
+// Los slides sin foto usan un fondo de marca (rojo a negro con marco dorado).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -19,6 +21,9 @@ import ImageBackground from './ImagenFondo';
 
 const INTERVALO = 4500;
 const MAX_OFERTAS = 2;
+const MAX_PROMOS = 2;
+const FUENTE_TITULOS = 'LilitaOne_400Regular';
+const DORADO = '#C9A24B';
 
 function formatoPrecio(valor) {
   const n = Number(valor);
@@ -29,7 +34,7 @@ function formatoPrecio(valor) {
 export default function HeroBanner() {
   const navigation = useNavigation();
   const enPantalla = useIsFocused(); // solo se mueve solo si estás en Inicio
-  const { productos, tamanos = [] } = useDatos();
+  const { productos, promociones = [], tamanos = [] } = useDatos();
   const { width } = useWindowDimensions();
   const anchoSlide = width - 32;
 
@@ -46,11 +51,20 @@ export default function HeroBanner() {
     const bienvenida = {
       id: 'bienvenida',
       etiqueta: MARCA.nombreMayusculas,
-      titulo: MARCA.lemaCorto,
+      titulo: MARCA.lema,
       subtitulo: desde ? `Pizzas desde ${formatoPrecio(desde)}` : 'Conoce nuestro menú',
       imagen: primeraPizza?.imagen ?? null,
       irA: primeraPizza ? { pantalla: 'ProductoDetalle', id: primeraPizza.id } : null,
     };
+
+    const promos = promociones.slice(0, MAX_PROMOS).map((p) => ({
+      id: `promo-${p.id}`,
+      etiqueta: p.etiqueta ? `PROMO ${p.etiqueta}` : 'PROMOCIÓN',
+      titulo: p.titulo,
+      subtitulo: p.descripcion || 'Pregunta en tu sucursal',
+      imagen: null,
+      irA: { pantalla: 'Promos' },
+    }));
 
     const paquetes = productos.filter(esPaqueteDePromos).map((p) => ({
       id: `paquete-${p.id}`,
@@ -75,8 +89,8 @@ export default function HeroBanner() {
         irA: { pantalla: 'ProductoDetalle', id: p.id },
       }));
 
-    return [bienvenida, ...paquetes, ...ofertas];
-  }, [productos, tamanos]);
+    return [bienvenida, ...promos, ...paquetes, ...ofertas];
+  }, [productos, promociones, tamanos]);
 
   const listaRef = useRef(null);
   const indiceRef = useRef(0);
@@ -172,9 +186,10 @@ export default function HeroBanner() {
                 <View style={styles.etiqueta}>
                   <Text style={styles.etiquetaTexto}>{item.etiqueta}</Text>
                 </View>
-                <Text style={styles.titulo} numberOfLines={1}>{item.titulo}</Text>
+                <Text style={styles.titulo} numberOfLines={2}>{item.titulo}</Text>
+                <View style={styles.lineaDorada} />
                 <View style={styles.filaInferior}>
-                  <Text style={styles.subtitulo} numberOfLines={1}>{item.subtitulo}</Text>
+                  <Text style={styles.subtitulo} numberOfLines={2}>{item.subtitulo}</Text>
                   {item.irA && <Text style={styles.verMas}>Ver más ›</Text>}
                 </View>
               </View>
@@ -196,8 +211,18 @@ export default function HeroBanner() {
                   {contenido}
                 </ImageBackground>
               ) : (
-                // Sin foto (por ejemplo, antes de cargar el menú): fondo oscuro de la marca
+                // Sin foto: fondo de marca (rojo a negro, marco dorado y anillos suaves)
                 <View style={[styles.slide, styles.slideSinFoto, { width: anchoSlide }]}>
+                  <LinearGradient
+                    colors={[COLORES.primarioOscuro, '#3A0B0D', COLORES.negro]}
+                    locations={[0, 0.55, 1]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  <View pointerEvents="none" style={styles.anilloGrande} />
+                  <View pointerEvents="none" style={styles.anilloChico} />
+                  <View pointerEvents="none" style={styles.marco} />
                   {contenido}
                 </View>
               )}
@@ -233,15 +258,49 @@ const styles = StyleSheet.create({
   },
   slideSinFoto: {
     backgroundColor: COLORES.negro,
+    overflow: 'hidden',
+  },
+  marco: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    bottom: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(201,162,75,0.5)',
+  },
+  anilloGrande: {
+    position: 'absolute',
+    top: -40,
+    right: -50,
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    borderWidth: 1.5,
+    borderColor: 'rgba(201,162,75,0.28)',
+  },
+  anilloChico: {
+    position: 'absolute',
+    top: -6,
+    right: -16,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 1,
+    borderColor: 'rgba(201,162,75,0.2)',
   },
   contenido: {
-    padding: 16,
+    padding: 18,
+    paddingBottom: 20,
   },
   etiqueta: {
     alignSelf: 'flex-start',
     backgroundColor: COLORES.primario,
-    borderRadius: 6,
-    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: DORADO,
+    paddingHorizontal: 10,
     paddingVertical: 3,
     marginBottom: 6,
   },
@@ -253,12 +312,21 @@ const styles = StyleSheet.create({
   },
   titulo: {
     color: '#FFFFFF',
-    fontFamily: 'Poppins_700Bold',
-    fontSize: 26,
-    lineHeight: 32,
+    fontFamily: FUENTE_TITULOS,
+    fontSize: 24,
+    lineHeight: 28,
+    letterSpacing: 0.4,
     textShadowColor: 'rgba(0,0,0,0.4)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
+  },
+  lineaDorada: {
+    width: 36,
+    height: 2,
+    backgroundColor: DORADO,
+    borderRadius: 1,
+    marginTop: 6,
+    marginBottom: 6,
   },
   filaInferior: {
     flexDirection: 'row',
@@ -268,7 +336,7 @@ const styles = StyleSheet.create({
   },
   subtitulo: {
     flex: 1,
-    color: 'rgba(255,255,255,0.85)',
+    color: 'rgba(255,255,255,0.88)',
     fontFamily: 'Poppins_400Regular',
     fontSize: 12,
   },
@@ -296,6 +364,6 @@ const styles = StyleSheet.create({
   },
   puntoActivo: {
     width: 16,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: DORADO,
   },
 });
