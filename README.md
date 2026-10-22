@@ -1,6 +1,6 @@
 # App Pizzeto's
 
-App móvil informativa de **Pizzeto's** ("La pizza de tu vida"), hecha con React Native, Expo y Supabase.
+App móvil informativa de ** Charly ** hecha con React Native, Expo y Supabase.
 Muestra el menú, los paquetes y la sucursal. Los pedidos se hacen por teléfono, WhatsApp o en sucursal.
 
 ## Qué necesitas tener instalado
@@ -14,8 +14,8 @@ Muestra el menú, los paquetes y la sucursal. Los pedidos se hacen por teléfono
 1. Descarga el proyecto:
 
    ```
-   git clone https://github.com/Joss-lg/App-Pizzetos_React.git
-   cd App-Pizzetos_React
+   git clone https://github.com/Joss-lg/App_Charly_React.git
+   cd App_Charly_React
    ```
 
 2. Instala todos los paquetes (ya vienen listados en `package.json`):
